@@ -1,0 +1,10 @@
+*.db
+*.csv
+*.log
+*.json
+*.yaml
+.env
+.aws/
+__pycache__/
+reports/*.csv
+reports/*.json
