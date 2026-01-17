@@ -34,21 +34,21 @@ fi
 # 1. Clean Slate
 # --------------------------------------------------
 if [ -f "$DB_FILE" ]; then
-    echo "🧹 Cleaning up existing database..."
+    echo "Cleaning up existing database..."
     rm "$DB_FILE"
 fi
 
 # --------------------------------------------------
 # 2. Initialize Database Schema
 # --------------------------------------------------
-echo -e "\n[1/6] Initializing Database Schema..."
+echo -e "\n[1/7] Initializing Database Schema..."
 DB_URL="$DB_URL" python3 scripts/migrate.py
-echo "      ✅ Schema initialized."
+echo "      Schema initialized."
 
 # --------------------------------------------------
 # 3. Identity Discovery
 # --------------------------------------------------
-echo -e "\n[2/6] Running Identity Discovery (AWS IAM)..."
+echo -e "\n[2/7] Running Identity Discovery (AWS IAM)..."
 export AWS_DEFAULT_REGION=us-east-1
 export DB_URL
 export MOCK_IAM
@@ -57,7 +57,7 @@ python3 lambdas/identity_discovery/handler.py
 # --------------------------------------------------
 # 4. Risk Evaluation
 # --------------------------------------------------
-echo -e "\n[3/6] Evaluating Entitlement Risk..."
+echo -e "\n[3/7] Evaluating Entitlement Risk..."
 python3 lambdas/risk_evaluation/handler.py
 
 # --------------------------------------------------
@@ -67,10 +67,14 @@ echo -e "\n[4/7] Generating Access Certification Campaign..."
 python3 lambdas/generate_reviews/handler.py
 
 # --------------------------------------------------
-# 6. AI Risk Explanation (High Risk Only)
+# 6. AI Risk Explanation (High Risk Only, optional)
 # --------------------------------------------------
-echo -e "\n[5/7] Generating AI risk explanations (HIGH only)..."
-python3 lambdas/ai_explanation/handler.py
+if [ -n "$GOOGLE_API_KEY" ]; then
+  echo -e "\n[5/7] Generating AI risk explanations (HIGH only)..."
+  python3 lambdas/ai_explanation/handler.py
+else
+  echo -e "\n[5/7] Skipping AI risk explanations (GOOGLE_API_KEY not set)..."
+fi
 
 # --------------------------------------------------
 # INTERMISSION: Simulate Human Review
@@ -113,7 +117,7 @@ logger.log("demo_intermission", "info", "Marked AdministratorAccess reviews as R
 PY
 fi
 
-echo "      ✅ Review decisions recorded."
+echo " Review decisions recorded."
 
 # --------------------------------------------------
 # 7. Remediation (Dry Run)

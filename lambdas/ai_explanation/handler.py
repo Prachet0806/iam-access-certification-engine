@@ -4,62 +4,46 @@ import json
 import sys
 from pathlib import Path
 
+from google import genai
+
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common import repo
 from common.db import db
-from common.logger import get_logger
-
-# Optional: swap OpenAI/Gemini behind this interface later
-from google import genai
-
-logger = get_logger(__name__)
+from common import logger
 
 GENAI_MODEL = "gemini-3-flash-preview"
 API_KEY = os.getenv("GOOGLE_API_KEY")
-
 client = genai.Client(api_key=API_KEY) if API_KEY else None
 
-
-SYSTEM_PROMPT = """
-You are an Identity Governance and Compliance Analyst.
-
-Given:
-- A user's department and role
-- An IAM policy in JSON format
-
-Explain in ONE concise sentence:
-1. Why this access is risky (if it is)
-2. What action is recommended
-
-Do NOT make final decisions.
-Do NOT invent facts.
-Use clear, non-technical language.
-Return plain text only.
-"""
+SYSTEM_PROMPT = (
+    "You are an Identity Governance and Compliance Analyst.\n\n"
+    "Given:\n- A user's department and role\n- An IAM policy in JSON format\n\n"
+    "Explain in ONE concise sentence:\n"
+    "1. Why this access is risky (if it is)\n"
+    "2. What action is recommended\n\n"
+    "Do NOT make final decisions.\n"
+    "Do NOT invent facts.\n"
+    "Use clear, non-technical language.\n"
+    "Return plain text only.\n"
+)
 
 
 def generate_ai_summary(user_context: dict, policy_json: dict) -> str:
-    """
-    Calls GenAI to generate a human-readable risk explanation.
-    """
     if not client:
         raise RuntimeError("GenAI client not initialized")
 
-    prompt = f"""
-User Context:
-{json.dumps(user_context, indent=2)}
-
-IAM Policy:
-{json.dumps(policy_json, indent=2)}
-"""
+    prompt = (
+        f"User Context:\n{json.dumps(user_context, indent=2)}\n\n"
+        f"IAM Policy:\n{json.dumps(policy_json, indent=2)}\n"
+    )
 
     response = client.models.generate_content(
         model=GENAI_MODEL,
         contents=f"{SYSTEM_PROMPT}\n\n{prompt}",
-        config={"temperature": 0.0}
+        config={"temperature": 0.0},
     )
 
     if hasattr(response, "text") and response.text:
@@ -94,10 +78,7 @@ def _build_context_from_db(conn, review_id: str) -> tuple[dict, dict, str] | Non
         "department": "Unknown",
         "role": role_name,
     }
-    policy_json = {
-        "policy_arn": role_id,
-        "policy_name": role_name,
-    }
+    policy_json = {"policy_arn": role_id, "policy_name": role_name}
     return user_context, policy_json, risk_level
 
 
@@ -116,51 +97,51 @@ def _persist_summary(conn, review_id: str, summary: str):
 def _process_single_review(conn, review_id: str, user_context: dict | None, policy_json: dict | None):
     existing = _existing_ai_summary(conn, review_id)
     if existing:
-        logger.info(f"AI explanation already present for review_id={review_id}")
+        logger.log("ai_explanation", "skip", "Already present", entity_id=review_id)
         return {"status": "SKIPPED", "review_id": review_id, "reason": "already_present"}
 
     risk_level = "HIGH"
     if not user_context or not policy_json:
         context = _build_context_from_db(conn, review_id)
         if not context:
-            logger.warning(f"Review not found for review_id={review_id}")
+            logger.log("ai_explanation", "error", "Review not found", level="ERROR", entity_id=review_id)
             return {"status": "FAILED", "review_id": review_id, "reason": "not_found"}
         user_context, policy_json, risk_level = context
 
     if risk_level != "HIGH":
-        logger.info(f"Skipping AI explanation for non-high risk review_id={review_id}")
+        logger.log("ai_explanation", "skip", "Non-high risk", entity_id=review_id)
         return {"status": "SKIPPED", "review_id": review_id, "reason": "non_high_risk"}
 
     try:
         summary = generate_ai_summary(user_context, policy_json)
     except Exception as e:
-        logger.warning(f"AI explanation failed: {str(e)}")
+        logger.log("ai_explanation", "warn", f"AI explanation failed: {e}", level="WARN", entity_id=review_id)
         summary = (
             "High-risk access detected based on policy and role mismatch. "
             "Manual review recommended."
         )
 
     _persist_summary(conn, review_id, summary)
-    logger.info(f"AI explanation stored for review_id={review_id}")
+    logger.log("ai_explanation", "success", "AI explanation stored", entity_id=review_id)
     return {"status": "SUCCESS", "review_id": review_id}
 
 
 def handler(event, context):
-    """
-    Triggered only for HIGH-risk access reviews.
-    """
     event = event or {}
     review_id = event.get("review_id")
     user_context = event.get("user_context")
     policy_json = event.get("policy_json")
 
+    if not client:
+        logger.log("ai_explanation", "skip", "GOOGLE_API_KEY not set; AI disabled")
+        return {"status": "DISABLED", "reason": "missing_api_key"}
+
     with db.get_connection() as conn:
         if review_id:
-            logger.info(f"AI explanation started for review_id={review_id}")
+            logger.log("ai_explanation", "start", "AI explanation started", entity_id=review_id)
             return _process_single_review(conn, review_id, user_context, policy_json)
 
-        # Batch mode: process all HIGH-risk reviews missing AI summary
-        logger.info("AI explanation batch started for HIGH-risk reviews")
+        logger.log("ai_explanation", "start", "Batch AI explanation for HIGH risk")
         results = []
         for row in repo.list_high_risk_reviews_missing_ai(conn):
             r_id = row[0]

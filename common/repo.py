@@ -189,14 +189,29 @@ def fetch_reviews_for_export(conn) -> List[Tuple[Any, ...]]:
             rol.risk_level,
             r.status,
             r.reviewer_comment,
-            r.ai_risk_summary,
             r.created_at,
             r.reviewed_at,
-            r.remediated_at
+            r.remediated_at,
+            r.ai_risk_summary
         FROM access_reviews r
         JOIN users u ON r.user_id = u.user_id
         JOIN roles rol ON r.role_id = rol.role_id
         ORDER BY r.created_at DESC
+        """,
+    )
+    return cur.fetchall()
+
+
+def list_high_risk_reviews_missing_ai(conn) -> List[Tuple[str]]:
+    cur = conn.cursor()
+    db.execute(
+        cur,
+        """
+        SELECT r.review_id
+        FROM access_reviews r
+        JOIN roles rol ON r.role_id = rol.role_id
+        WHERE rol.risk_level = 'HIGH'
+          AND (r.ai_risk_summary IS NULL OR r.ai_risk_summary = '')
         """,
     )
     return cur.fetchall()
